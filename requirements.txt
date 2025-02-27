@@ -1,0 +1,33 @@
+# Django and core dependencies
+Django==4.2.10
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+django-filter==23.5
+django-environ==0.11.2
+
+# Authentication
+djangorestframework-simplejwt==5.3.1
+
+# API Documentation
+drf-yasg==1.21.7
+
+# Stripe Integration
+stripe==7.10.0
+
+# Database
+psycopg2-binary==2.9.9
+
+# Testing
+pytest==7.4.3
+pytest-django==4.7.0
+
+# Utilities
+pillow==10.2.0
+python-dateutil==2.8.2
+requests==2.31.0
+celery==5.3.6
+redis==5.0.1
+
+# Server
+gunicorn==21.2.0
+uvicorn==0.27.1
