@@ -4,322 +4,373 @@ For scraping.co.il
 """
 
 import logging
+import stripe
 from django.utils import timezone
 from django.http import HttpResponse
 from django.conf import settings
+from django.db import transaction
 
-from rest_framework import viewsets, permissions, status, generics
-from rest_framework.decorators import action
+from rest_framework import status, generics, permissions
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-import stripe
-from .models import Plan, Subscription, Payment, Invoice
+from accounts.models import User, Transaction
+from .models import TokenPackage, Payment, Invoice
 from .serializers import (
-    PlanSerializer,
-    SubscriptionSerializer,
+    TokenPackageSerializer,
     PaymentSerializer,
     InvoiceSerializer,
-    CreateSubscriptionSerializer,
-    CancelSubscriptionSerializer,
-    UpdatePaymentMethodSerializer,
-    CreateCheckoutSessionSerializer,
+    CreatePaymentIntentSerializer,
+    ConfirmPaymentSerializer,
 )
 from .services.stripe_service import StripeService
 
 logger = logging.getLogger(__name__)
 
+# Configure Stripe API key
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
-class PlanViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    ViewSet for viewing plans.
-    """
 
-    queryset = Plan.objects.filter(is_active=True)
-    serializer_class = PlanSerializer
+class TokenPackageListView(generics.ListAPIView):
+    """
+    View for listing available token packages.
+    """
+    serializer_class = TokenPackageSerializer
     permission_classes = [permissions.AllowAny]
+    queryset = TokenPackage.objects.filter(is_active=True)
 
 
-class SubscriptionViewSet(viewsets.ReadOnlyModelViewSet):
+class PaymentHistoryView(generics.ListAPIView):
     """
-    ViewSet for managing subscriptions.
+    View for listing user payment history.
     """
-
-    serializer_class = SubscriptionSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        """
-        Return the queryset based on user permissions.
-        """
-        user = self.request.user
-
-        if user.is_staff:
-            return Subscription.objects.all()
-
-        # Regular users can only see their own subscriptions
-        return Subscription.objects.filter(user=user)
-
-    @swagger_auto_schema(
-        method="post",
-        request_body=CreateSubscriptionSerializer,
-        responses={201: SubscriptionSerializer()},
-        operation_description="Create a new subscription.",
-    )
-    @action(detail=False, methods=["post"], url_path="create")
-    def create_subscription(self, request):
-        """
-        Create a new subscription.
-        """
-        serializer = CreateSubscriptionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        try:
-            plan = Plan.objects.get(id=serializer.validated_data["plan_id"])
-
-            # Call Stripe to create subscription
-            stripe_subscription = StripeService.create_subscription(
-                request.user,
-                plan,
-                serializer.validated_data["payment_method_id"],
-                serializer.validated_data.get("coupon"),
-            )
-
-            # Create subscription record
-            start_date = timezone.datetime.fromtimestamp(
-                stripe_subscription["current_period_start"]
-            )
-            end_date = timezone.datetime.fromtimestamp(
-                stripe_subscription["current_period_end"]
-            )
-            trial_end = None
-            if stripe_subscription.get("trial_end"):
-                trial_end = timezone.datetime.fromtimestamp(
-                    stripe_subscription["trial_end"]
-                )
-
-            subscription = Subscription.objects.create(
-                user=request.user,
-                plan=plan,
-                status=stripe_subscription["status"],
-                start_date=start_date,
-                end_date=end_date,
-                trial_end=trial_end,
-                stripe_subscription_id=stripe_subscription["id"],
-            )
-
-            return Response(
-                SubscriptionSerializer(subscription).data,
-                status=status.HTTP_201_CREATED,
-            )
-
-        except Plan.DoesNotExist:
-            return Response(
-                {"error": "Plan not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-        except stripe.error.CardError as e:
-            return Response(
-                {"error": f"Card error: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.error(f"Error creating subscription: {str(e)}")
-            return Response(
-                {"error": "An error occurred while creating the subscription"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    @swagger_auto_schema(
-        method="post",
-        request_body=CancelSubscriptionSerializer,
-        responses={200: SubscriptionSerializer()},
-        operation_description="Cancel a subscription.",
-    )
-    @action(detail=False, methods=["post"], url_path="cancel")
-    def cancel_subscription(self, request):
-        """
-        Cancel a subscription.
-        """
-        serializer = CancelSubscriptionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        try:
-            subscription = Subscription.objects.get(
-                id=serializer.validated_data["subscription_id"], user=request.user
-            )
-
-            # Call Stripe to cancel subscription
-            stripe_subscription = StripeService.cancel_subscription(
-                subscription, serializer.validated_data.get("at_period_end", True)
-            )
-
-            # Update subscription status
-            if not serializer.validated_data.get("at_period_end", True):
-                subscription.status = "canceled"
-                subscription.save()
-
-            return Response(
-                SubscriptionSerializer(subscription).data, status=status.HTTP_200_OK
-            )
-
-        except Subscription.DoesNotExist:
-            return Response(
-                {"error": "Subscription not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            logger.error(f"Error cancelling subscription: {str(e)}")
-            return Response(
-                {"error": "An error occurred while cancelling the subscription"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    @swagger_auto_schema(
-        method="post",
-        request_body=UpdatePaymentMethodSerializer,
-        responses={200: "Payment method updated successfully"},
-        operation_description="Update payment method.",
-    )
-    @action(detail=False, methods=["post"], url_path="update-payment-method")
-    def update_payment_method(self, request):
-        """
-        Update payment method.
-        """
-        serializer = UpdatePaymentMethodSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        try:
-            # Call Stripe to update payment method
-            StripeService.update_payment_method(
-                request.user, serializer.validated_data["payment_method_id"]
-            )
-
-            return Response(
-                {"message": "Payment method updated successfully"},
-                status=status.HTTP_200_OK,
-            )
-
-        except stripe.error.CardError as e:
-            return Response(
-                {"error": f"Card error: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.error(f"Error updating payment method: {str(e)}")
-            return Response(
-                {"error": "An error occurred while updating the payment method"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    @swagger_auto_schema(
-        method="post",
-        request_body=CreateCheckoutSessionSerializer,
-        responses={200: "Checkout session created successfully"},
-        operation_description="Create a checkout session.",
-    )
-    @action(detail=False, methods=["post"], url_path="create-checkout-session")
-    def create_checkout_session(self, request):
-        """
-        Create a checkout session.
-        """
-        serializer = CreateCheckoutSessionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        try:
-            plan = Plan.objects.get(id=serializer.validated_data["plan_id"])
-
-            # Call Stripe to create checkout session
-            checkout_session = StripeService.create_checkout_session(
-                request.user,
-                plan,
-                serializer.validated_data["success_url"],
-                serializer.validated_data["cancel_url"],
-            )
-
-            return Response(
-                {"session_id": checkout_session.id}, status=status.HTTP_200_OK
-            )
-
-        except Plan.DoesNotExist:
-            return Response(
-                {"error": "Plan not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            logger.error(f"Error creating checkout session: {str(e)}")
-            return Response(
-                {"error": "An error occurred while creating the checkout session"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-
-class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    ViewSet for viewing payments.
-    """
-
     serializer_class = PaymentSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         """
-        Return the queryset based on user permissions.
+        Return the queryset of payments for the current user.
         """
-        user = self.request.user
-
-        if user.is_staff:
-            return Payment.objects.all()
-
-        # Regular users can only see their own payments
-        return Payment.objects.filter(user=user)
+        return Payment.objects.filter(user=self.request.user).order_by('-created_at')
 
 
-class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
+class CreatePaymentIntentView(APIView):
     """
-    ViewSet for viewing invoices.
+    View for creating a Stripe payment intent.
     """
-
-    serializer_class = InvoiceSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-    def get_queryset(self):
+    @swagger_auto_schema(
+        request_body=CreatePaymentIntentSerializer,
+        responses={200: "Payment intent created", 400: "Invalid package"},
+        operation_description="Create a Stripe payment intent for token purchase.",
+    )
+    def post(self, request):
         """
-        Return the queryset based on user permissions.
+        Create a Stripe payment intent for token purchase.
         """
-        user = self.request.user
+        serializer = CreatePaymentIntentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        if user.is_staff:
-            return Invoice.objects.all()
+        try:
+            # Get token package
+            token_package = TokenPackage.objects.get(
+                id=serializer.validated_data["token_package_id"],
+                is_active=True
+            )
 
-        # Regular users can only see their own invoices
-        return Invoice.objects.filter(user=user)
+            # Ensure user has a Stripe customer ID
+            if not request.user.stripe_customer_id:
+                customer = stripe.Customer.create(
+                    email=request.user.email,
+                    name=f"{request.user.first_name} {request.user.last_name}",
+                    metadata={"user_id": str(request.user.id)},
+                )
+                request.user.stripe_customer_id = customer.id
+                request.user.save(update_fields=["stripe_customer_id"])
+
+            # Create payment intent
+            payment_intent = stripe.PaymentIntent.create(
+                amount=int(token_package.price * 100),  # Convert to cents
+                currency=token_package.currency.lower(),
+                customer=request.user.stripe_customer_id,
+                metadata={
+                    "user_id": str(request.user.id),
+                    "token_package_id": str(token_package.id),
+                    "token_amount": token_package.token_amount,
+                },
+                description=f"Purchase of {token_package.name} ({token_package.token_amount} tokens)",
+            )
+
+            # Create pending payment record
+            payment = Payment.objects.create(
+                user=request.user,
+                token_package=token_package,
+                amount=token_package.price,
+                currency=token_package.currency,
+                payment_method="card",
+                token_amount=token_package.token_amount,
+                status="pending",
+                stripe_payment_intent_id=payment_intent.id,
+                description=f"Purchase of {token_package.name}",
+            )
+
+            return Response({
+                "client_secret": payment_intent.client_secret,
+                "payment_id": payment.id,
+            }, status=status.HTTP_200_OK)
+
+        except TokenPackage.DoesNotExist:
+            return Response(
+                {"error": "Token package not found or not active"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error: {str(e)}")
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.error(f"Error creating payment intent: {str(e)}")
+            return Response(
+                {"error": "An error occurred while processing your request"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
-class StripeWebhookView(generics.GenericAPIView):
+class ConfirmPaymentView(APIView):
+    """
+    View for confirming a payment after Stripe payment is complete.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @swagger_auto_schema(
+        request_body=ConfirmPaymentSerializer,
+        responses={200: "Payment confirmed", 400: "Invalid payment"},
+        operation_description="Confirm payment after Stripe payment is complete.",
+    )
+    def post(self, request):
+        """
+        Confirm payment after Stripe payment is complete.
+        """
+        serializer = ConfirmPaymentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            # Get payment intent
+            payment_intent_id = serializer.validated_data["payment_intent_id"]
+            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+
+            # Check payment status
+            if payment_intent.status != "succeeded":
+                return Response(
+                    {"error": "Payment has not been completed"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Get payment record
+            payment = Payment.objects.filter(
+                stripe_payment_intent_id=payment_intent_id,
+                user=request.user,
+                status="pending",
+            ).first()
+
+            if not payment:
+                return Response(
+                    {"error": "Payment not found or already processed"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Process payment with transaction
+            with transaction.atomic():
+                # Update payment record
+                payment.status = "completed"
+                payment.stripe_charge_id = payment_intent.charges.data[0].id if payment_intent.charges.data else None
+                payment.updated_at = timezone.now()
+                payment.save()
+
+                # Update user balance
+                user = request.user
+                balance_before = user.balance
+                user.balance += payment.token_amount
+                user.save(update_fields=["balance"])
+
+                # Create transaction record
+                Transaction.objects.create(
+                    user=user,
+                    transaction_type="purchase",
+                    amount=payment.token_amount,
+                    balance_before=balance_before,
+                    balance_after=user.balance,
+                    description=f"Purchase of {payment.token_amount} tokens",
+                    reference_id=str(payment.id),
+                )
+
+                # Generate invoice
+                invoice = Invoice.objects.create(
+                    user=user,
+                    payment=payment,
+                    invoice_number=f"INV-{payment.id.hex[:8].upper()}",
+                    invoice_date=timezone.now().date(),
+                    due_date=timezone.now().date(),
+                    status="paid",
+                    billing_name=f"{user.first_name} {user.last_name}",
+                    billing_address=user.address or "",
+                    billing_email=user.email,
+                )
+
+                logger.info(f"Payment completed for user {user.email}, added {payment.token_amount} tokens")
+
+            return Response({
+                "message": "Payment confirmed successfully",
+                "payment": PaymentSerializer(payment).data,
+                "new_balance": user.balance,
+            }, status=status.HTTP_200_OK)
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error during payment confirmation: {str(e)}")
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.error(f"Error confirming payment: {str(e)}")
+            return Response(
+                {"error": "An error occurred while confirming your payment"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class StripeWebhookView(APIView):
     """
     View for handling Stripe webhooks.
     """
-
     permission_classes = [permissions.AllowAny]
-
+    
     def post(self, request):
         """
         Handle webhook events from Stripe.
         """
         payload = request.body
         sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
-
+        
+        if not sig_header:
+            return Response(
+                {"error": "Stripe signature header is missing"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+            
         try:
-            # Process the webhook
-            event_data = StripeService.handle_webhook_event(payload, sig_header)
-
-            return Response(event_data, status=status.HTTP_200_OK)
-
-        except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except stripe.error.SignatureVerificationError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            # Verify webhook signature
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+            )
+            
+            # Process different webhook events
+            if event.type == "payment_intent.succeeded":
+                self._handle_payment_intent_succeeded(event.data.object)
+            elif event.type == "payment_intent.payment_failed":
+                self._handle_payment_intent_failed(event.data.object)
+            
+            return Response({"status": "success"}, status=status.HTTP_200_OK)
+            
+        except stripe.error.SignatureVerificationError:
+            return Response(
+                {"error": "Invalid signature"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as e:
-            logger.error(f"Webhook error: {str(e)}")
+            logger.error(f"Error processing webhook: {str(e)}")
             return Response(
                 {"error": "An error occurred while processing the webhook"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+    
+    def _handle_payment_intent_succeeded(self, payment_intent):
+        """
+        Handle a payment_intent.succeeded event.
+        """
+        try:
+            # Get payment record
+            payment = Payment.objects.filter(
+                stripe_payment_intent_id=payment_intent.id,
+                status="pending",
+            ).first()
+            
+            if not payment:
+                logger.warning(f"Payment not found for intent {payment_intent.id} or already processed")
+                return
+                
+            # Process payment with transaction
+            with transaction.atomic():
+                # Update payment record
+                payment.status = "completed"
+                payment.stripe_charge_id = payment_intent.charges.data[0].id if payment_intent.charges.data else None
+                payment.updated_at = timezone.now()
+                payment.save()
+                
+                # Update user balance
+                user = payment.user
+                balance_before = user.balance
+                user.balance += payment.token_amount
+                user.save(update_fields=["balance"])
+                
+                # Create transaction record
+                Transaction.objects.create(
+                    user=user,
+                    transaction_type="purchase",
+                    amount=payment.token_amount,
+                    balance_before=balance_before,
+                    balance_after=user.balance,
+                    description=f"Purchase of {payment.token_amount} tokens",
+                    reference_id=str(payment.id),
+                )
+                
+                # Generate invoice
+                invoice = Invoice.objects.create(
+                    user=user,
+                    payment=payment,
+                    invoice_number=f"INV-{payment.id.hex[:8].upper()}",
+                    invoice_date=timezone.now().date(),
+                    due_date=timezone.now().date(),
+                    status="paid",
+                    billing_name=f"{user.first_name} {user.last_name}",
+                    billing_address=user.address or "",
+                    billing_email=user.email,
+                )
+                
+                logger.info(f"Payment completed via webhook for user {user.email}, added {payment.token_amount} tokens")
+                
+        except Exception as e:
+            logger.error(f"Error processing payment_intent.succeeded webhook: {str(e)}")
+            raise
+    
+    def _handle_payment_intent_failed(self, payment_intent):
+        """
+        Handle a payment_intent.payment_failed event.
+        """
+        try:
+            # Get payment record
+            payment = Payment.objects.filter(
+                stripe_payment_intent_id=payment_intent.id,
+                status="pending",
+            ).first()
+            
+            if not payment:
+                logger.warning(f"Payment not found for intent {payment_intent.id} or already processed")
+                return
+                
+            # Update payment record
+            payment.status = "failed"
+            payment.updated_at = timezone.now()
+            payment.save()
+            
+            logger.info(f"Payment failed for user {payment.user.email}")
+            
+        except Exception as e:
+            logger.error(f"Error processing payment_intent.payment_failed webhook: {str(e)}")
+            raise

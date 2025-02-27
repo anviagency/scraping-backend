@@ -1,12 +1,9 @@
-"""
-URL configuration for the payments app.
-"""
-
 from django.urls import path
-
 from .views import (
-    TokenPackageListView, PaymentHistoryView, 
-    CreatePaymentIntentView, ConfirmPaymentView,
+    TokenPackageListView, 
+    PaymentHistoryView, 
+    CreatePaymentIntentView, 
+    ConfirmPaymentView,
     StripeWebhookView
 )
 
@@ -19,6 +16,6 @@ urlpatterns = [
     path('create-payment-intent/', CreatePaymentIntentView.as_view(), name='create-payment-intent'),
     path('confirm-payment/', ConfirmPaymentView.as_view(), name='confirm-payment'),
     
-    # Webhooks
+    # Webhook
     path('webhook/', StripeWebhookView.as_view(), name='stripe-webhook'),
 ]

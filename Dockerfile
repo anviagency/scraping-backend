@@ -36,4 +36,4 @@ RUN mkdir -p logs
 RUN python manage.py collectstatic --noinput
 
 # Run gunicorn
-CMD gunicorn fintech_project.wsgi:application --bind 0.0.0.0:8000
+CMD gunicorn Scraping_backend.wsgi:application --bind 0.0.0.0:8000

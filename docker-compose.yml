@@ -43,7 +43,7 @@ services:
 
   celery:
     build: .
-    command: celery -A fintech_project worker -l info
+    command: celery -A Scraping_backend worker -l info
     volumes:
       - .:/app
     env_file:
@@ -58,7 +58,7 @@ services:
 
   celery-beat:
     build: .
-    command: celery -A fintech_project beat -l info
+    command: celery -A Scraping_backend beat -l info
     volumes:
       - .:/app
     env_file:

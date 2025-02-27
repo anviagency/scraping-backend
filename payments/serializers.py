@@ -1,7 +1,3 @@
-"""
-Serializers for the payments app.
-"""
-
 from rest_framework import serializers
 from .models import TokenPackage, Payment, Invoice
 

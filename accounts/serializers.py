@@ -7,6 +7,8 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from .models import Transaction
+
 User = get_user_model()
 
 
@@ -82,6 +84,29 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return data
 
 
+class PasswordChangeSerializer(serializers.Serializer):
+    """
+    Serializer for changing password.
+    """
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, validators=[validate_password])
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """
+    Serializer for requesting password reset.
+    """
+    email = serializers.EmailField(required=True)
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    Serializer for confirming password reset.
+    """
+    token = serializers.UUIDField(required=True)
+    new_password = serializers.CharField(required=True, validators=[validate_password])
+
+
 class TransactionSerializer(serializers.ModelSerializer):
     """
     Serializer for user transactions.
@@ -89,7 +114,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     transaction_type_display = serializers.CharField(source='get_transaction_type_display', read_only=True)
     
     class Meta:
-        model = User.transactions.related.related_model
+        model = Transaction
         fields = [
             'id', 'transaction_type', 'transaction_type_display', 
             'amount', 'balance_before', 'balance_after',

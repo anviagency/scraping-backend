@@ -10,6 +10,34 @@ from django.utils.translation import gettext_lazy as _
 User = get_user_model()
 
 
+class TokenPackage(models.Model):
+    """
+    Token packages that users can purchase.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(_("package name"), max_length=100)
+    description = models.TextField(_("description"), blank=True, null=True)
+    token_amount = models.IntegerField(_("token amount"))
+    price = models.DecimalField(_("price"), max_digits=10, decimal_places=2)
+    currency = models.CharField(_("currency"), max_length=3, default="USD")
+    
+    # Stripe product and price IDs
+    stripe_product_id = models.CharField(_("Stripe product ID"), max_length=100, blank=True, null=True)
+    stripe_price_id = models.CharField(_("Stripe price ID"), max_length=100, blank=True, null=True)
+    
+    # Status and timestamps
+    is_active = models.BooleanField(_("active"), default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = _("token package")
+        verbose_name_plural = _("token packages")
+        
+    def __str__(self):
+        return f"{self.name} ({self.token_amount} tokens, {self.price} {self.currency})"
+
+
 class Plan(models.Model):
     """
     Subscription plans for users.
@@ -121,6 +149,9 @@ class Payment(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="payments")
+    token_package = models.ForeignKey(
+        TokenPackage, on_delete=models.SET_NULL, null=True, blank=True
+    )
     subscription = models.ForeignKey(
         Subscription,
         on_delete=models.SET_NULL,
@@ -133,16 +164,7 @@ class Payment(models.Model):
     amount = models.DecimalField(_("amount"), max_digits=10, decimal_places=2)
     currency = models.CharField(_("currency"), max_length=3, default="USD")
     payment_method = models.CharField(_("payment method"), max_length=50)
-
-    # Payment type
-    PAYMENT_TYPE_CHOICES = [
-        ("subscription", _("Subscription")),
-        ("one_time", _("One-time purchase")),
-        ("refund", _("Refund")),
-    ]
-    payment_type = models.CharField(
-        _("payment type"), max_length=20, choices=PAYMENT_TYPE_CHOICES
-    )
+    token_amount = models.IntegerField(_("token amount"), default=0)
 
     # Status
     STATUS_CHOICES = [

@@ -34,6 +34,9 @@ class User(AbstractUser):
 
     # Stripe customer ID
     stripe_customer_id = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Balance for token system
+    balance = models.DecimalField(_("token balance"), max_digits=12, decimal_places=2, default=0)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -67,3 +70,39 @@ class UserVerification(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.token}"
+
+
+class Transaction(models.Model):
+    """
+    Tracks token balance changes for users.
+    """
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="transactions")
+    
+    # Transaction details
+    TRANSACTION_TYPES = (
+        ('purchase', _('Purchase')),
+        ('usage', _('Usage')),
+        ('refund', _('Refund')),
+        ('bonus', _('Bonus')),
+    )
+    transaction_type = models.CharField(_("transaction type"), max_length=20, choices=TRANSACTION_TYPES)
+    amount = models.DecimalField(_("amount"), max_digits=12, decimal_places=2)
+    balance_before = models.DecimalField(_("balance before"), max_digits=12, decimal_places=2)
+    balance_after = models.DecimalField(_("balance after"), max_digits=12, decimal_places=2)
+    
+    # Description and reference
+    description = models.CharField(_("description"), max_length=255, blank=True, null=True)
+    reference_id = models.CharField(_("reference ID"), max_length=100, blank=True, null=True)
+    
+    # Timestamp
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = _("transaction")
+        verbose_name_plural = _("transactions")
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.transaction_type} - {self.amount}"
