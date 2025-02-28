@@ -173,9 +173,14 @@ CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
 ])
 
 # Stripe settings
-STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='')
-STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='')
-STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
+STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='pk_test_51Pyaem05oKo3ZleUUzSCNzUxl8wyvPLjGcgJbTpflwmOZ2aCghlhpBc7P07OOGTaJGcqYCiOxHh79N8zYIE57X4U00AGvG9Cp8')
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_51Pyaem05oKo3ZleUbXJamwWTkl0BaX2HadFCa1WwUZZoKCWqfyyeCBN6LoWozFTypXe39GgJ6Gz2rFvjZIlWR0zo00hu0IV8pQ')
+STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='whsec_your_webhook_secret')
+
+# Stripe Test Keys (for test mode)
+STRIPE_TEST_PUBLISHABLE_KEY = env('STRIPE_TEST_PUBLISHABLE_KEY', default='pk_test_51Pyaem05oKo3ZleUUzSCNzUxl8wyvPLjGcgJbTpflwmOZ2aCghlhpBc7P07OOGTaJGcqYCiOxHh79N8zYIE57X4U00AGvG9Cp8')
+STRIPE_TEST_SECRET_KEY = env('STRIPE_TEST_SECRET_KEY', default='sk_test_51Pyaem05oKo3ZleUbXJamwWTkl0BaX2HadFCa1WwUZZoKCWqfyyeCBN6LoWozFTypXe39GgJ6Gz2rFvjZIlWR0zo00hu0IV8pQ')
+STRIPE_TEST_WEBHOOK_SECRET = env('STRIPE_TEST_WEBHOOK_SECRET', default='whsec_your_webhook_secret')
 
 # Email settings
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
