@@ -87,6 +87,9 @@ class CreatePaymentIntentView(APIView):
                 stripe.api_key = STRIPE_LIVE_SECRET_KEY
                 logger.info("Using Stripe LIVE mode")
             
+            # Get customer name if provided
+            customer_name = request.data.get('customer_name', '')
+            
             # Handle custom package
             is_custom = request.data.get('is_custom', False)
             
@@ -100,7 +103,7 @@ class CreatePaymentIntentView(APIView):
                     token_package = TokenPackage.objects.filter(id=token_package_id).first()
                     
                     if not token_package:
-                        # Create a new custom package
+                        # Create a new custom package with data from request
                         token_package = TokenPackage.objects.create(
                             id=token_package_id,
                             name="חבילה מותאמת אישית",
@@ -143,7 +146,7 @@ class CreatePaymentIntentView(APIView):
                 logger.info(f"Creating Stripe customer for user {request.user.email}")
                 customer = stripe.Customer.create(
                     email=request.user.email,
-                    name=f"{request.user.first_name} {request.user.last_name}",
+                    name=customer_name or f"{request.user.first_name} {request.user.last_name}",
                     metadata={
                         "user_id": str(request.user.id),
                         "test_mode": "true" if test_mode else "false"
@@ -158,7 +161,8 @@ class CreatePaymentIntentView(APIView):
                 "token_package_id": str(token_package.id),
                 "token_amount": token_package.token_amount,
                 "test_mode": "true" if test_mode else "false",
-                "is_custom": "true" if is_custom else "false"
+                "is_custom": "true" if is_custom else "false",
+                "customer_name": customer_name
             }
             
             # Decide whether to use Payment Intent or Checkout Session
@@ -200,7 +204,7 @@ class CreatePaymentIntentView(APIView):
                     status="pending",
                     stripe_payment_intent_id=checkout_session.id,
                     description=f"Purchase of {token_package.name}",
-                    metadata={"test_mode": test_mode, "is_custom": is_custom}
+                    metadata={"test_mode": test_mode, "is_custom": is_custom, "customer_name": customer_name}
                 )
                 
                 return Response({
@@ -229,7 +233,7 @@ class CreatePaymentIntentView(APIView):
                     status="pending",
                     stripe_payment_intent_id=payment_intent.id,
                     description=f"Purchase of {token_package.name}",
-                    metadata={"test_mode": test_mode, "is_custom": is_custom}
+                    metadata={"test_mode": test_mode, "is_custom": is_custom, "customer_name": customer_name}
                 )
                 
                 # Create simulated checkout URL for test mode
@@ -377,7 +381,7 @@ class ConfirmPaymentView(APIView):
                     invoice_date=timezone.now().date(),
                     due_date=timezone.now().date(),
                     status="paid",
-                    billing_name=f"{user.first_name} {user.last_name}",
+                    billing_name=payment.metadata.get('customer_name') or f"{user.first_name} {user.last_name}",
                     billing_address=user.address or "",
                     billing_email=user.email,
                 )
@@ -514,7 +518,7 @@ class StripeWebhookView(APIView):
                     invoice_date=timezone.now().date(),
                     due_date=timezone.now().date(),
                     status="paid",
-                    billing_name=f"{user.first_name} {user.last_name}",
+                    billing_name=payment.metadata.get('customer_name') or f"{user.first_name} {user.last_name}",
                     billing_address=user.address or "",
                     billing_email=user.email,
                 )
@@ -606,7 +610,7 @@ class StripeWebhookView(APIView):
                     invoice_date=timezone.now().date(),
                     due_date=timezone.now().date(),
                     status="paid",
-                    billing_name=f"{user.first_name} {user.last_name}",
+                    billing_name=payment.metadata.get('customer_name') or f"{user.first_name} {user.last_name}",
                     billing_address=user.address or "",
                     billing_email=user.email,
                 )
